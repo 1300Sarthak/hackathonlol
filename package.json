@@ -1,0 +1,105 @@
+{
+  "name": "social-translator",
+  "version": "1.0.0",
+  "main": "./dist-electron/main.js",
+  "scripts": {
+    "clean": "rimraf dist dist-electron",
+    "dev": "cross-env NODE_ENV=development vite",
+    "build": "node scripts/build.js",
+    "preview": "vite preview",
+    "electron:dev": "tsc -p electron/tsconfig.json && electron .",
+    "app:dev": "concurrently \"cross-env NODE_ENV=development vite\" \"wait-on http://localhost:5173 && cross-env electron .\"",
+    "app:build": "npm run build",
+    "watch": "tsc -p electron/tsconfig.json --watch"
+  },
+  "build": {
+    "appId": "social.translator.app",
+    "productName": "Social Translator",
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "package.json",
+      "electron/**/*"
+    ],
+    "directories": {
+      "output": "release",
+      "buildResources": "assets"
+    },
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        "dmg",
+        "zip"
+      ],
+      "icon": "assets/icons/mac/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist"
+    },
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "assets/icons/win/icon.ico"
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "icon": "assets/icons/png/icon-256x256.png"
+    }
+  },
+  "keywords": ["ai", "emotion", "meeting", "social", "translator", "productivity"],
+  "author": "",
+  "license": "ISC",
+  "description": "Real-time emotional intelligence overlay for video calls — reads facial expressions, transcribes speech, and surfaces behavioral guidance.",
+  "devDependencies": {
+    "@types/electron": "^1.4.38",
+    "@types/electron-store": "^1.3.1",
+    "@types/node": "^22.9.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@types/uuid": "^9.0.8",
+    "@typescript-eslint/eslint-plugin": "^8.14.0",
+    "@typescript-eslint/parser": "^8.14.0",
+    "@vitejs/plugin-react": "^4.3.3",
+    "autoprefixer": "^10.4.20",
+    "concurrently": "^9.1.0",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.7",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "electron-is-dev": "^3.0.1",
+    "postcss": "^8.4.49",
+    "rimraf": "^6.0.1",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^5.4.11",
+    "vite-plugin-electron": "^0.28.8",
+    "vite-plugin-electron-renderer": "^0.14.6",
+    "wait-on": "^8.0.1"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.2",
+    "@radix-ui/react-label": "^2.1.0",
+    "@radix-ui/react-slot": "^1.1.0",
+    "@radix-ui/react-toast": "^1.2.2",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "date-fns": "^3.6.0",
+    "electron-store": "^10.0.0",
+    "electron-updater": "^6.3.9",
+    "form-data": "^4.0.1",
+    "framer-motion": "^11.11.0",
+    "lucide-react": "^0.460.0",
+    "node-record-lpcm16": "^1.0.1",
+    "openai": "^4.28.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "sharp": "^0.33.5",
+    "tailwind-merge": "^2.5.5",
+    "uuid": "^11.0.3",
+    "zustand": "^5.0.0"
+  }
+}
