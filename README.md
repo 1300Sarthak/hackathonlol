@@ -1,7 +1,3 @@
-Ideas:
+# NVIDIA Shortest Hackathon
 
-- Accessibility project
-- Blockchian health app
-- Emotion analysis application
-- GPS for the blind
-- Speech lessons
+# live transciption and sentiment analysis for the impaired
