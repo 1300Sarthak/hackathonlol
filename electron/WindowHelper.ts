@@ -95,7 +95,8 @@ export class WindowHelper {
       backgroundColor: "#00000000",
       focusable: true,
       alwaysOnTop: true,
-      skipTaskbar: true
+      skipTaskbar: true,
+      type: "panel", // Use "panel" instead of deprecated "textured"
     }
 
     this.mainWindow = new BrowserWindow(windowSettings)

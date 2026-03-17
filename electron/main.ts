@@ -73,13 +73,13 @@ export class AppState {
     this.meetingDetector = new MeetingDetector()
     this.frameDiffHelper = new FrameDiffHelper()
 
-    // Initialize emotion analyzer with NVIDIA NIM API key
-    const apiKey = process.env.NVIDIA_NIM_API_KEY
-    console.log(`[AppState] NVIDIA_NIM_API_KEY loaded: ${apiKey ? "YES (" + apiKey.substring(0, 10) + "...)" : "NO — check .env.local"}`)
+    // Initialize emotion analyzer with Claude API key
+    const apiKey = process.env.CLAUDE_API_KEY
+    console.log(`[AppState] CLAUDE_API_KEY loaded: ${apiKey ? "YES (" + apiKey.substring(0, 12) + "...)" : "NO — check .env.local"}`)
     if (apiKey) {
       this.emotionAnalyzer = new EmotionAnalyzerHelper(apiKey)
     } else {
-      console.error("[AppState] WARNING: No NVIDIA_NIM_API_KEY found. Analysis will not work.")
+      console.error("[AppState] WARNING: No CLAUDE_API_KEY found. Analysis will not work.")
       console.error("[AppState] Searched paths:", envPaths)
     }
 
@@ -128,7 +128,7 @@ export class AppState {
   public setView(view: ViewType): void {
     this.view = view
     const mainWindow = this.getMainWindow()
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(this.EVENTS.VIEW_CHANGED, view)
     }
   }
@@ -216,17 +216,16 @@ export class AppState {
 
     try {
       // Capture screen (no hide/show — contentProtection keeps our window invisible in screenshots)
-      const { buffer, base64 } = await this.screenshotHelper.captureToBuffer()
+      const { buffer, base64, mediaType } = await this.screenshotHelper.captureToBuffer()
 
       // Check frame diff — skip if not significantly changed
       const hasChange = this.frameDiffHelper.hasSignificantChange(buffer)
       if (!hasChange) {
-        console.log("[Analysis] Frame unchanged, skipping")
         return
       }
 
-      // Analyze with NVIDIA NIM
-      const result = await this.emotionAnalyzer.analyzeFrame(base64)
+      // Analyze with Claude
+      const result = await this.emotionAnalyzer.analyzeFrame(base64, mediaType)
       if (!result) return
 
       this.lastAnalysisResult = result
@@ -307,7 +306,7 @@ export class AppState {
     )
 
     const mainWindow = this.getMainWindow()
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(this.EVENTS.MEETING_SUMMARY, summary)
     }
 

@@ -1,4 +1,4 @@
-import OpenAI from "openai"
+import Anthropic from "@anthropic-ai/sdk"
 
 export interface AnalysisParticipant {
   id: string
@@ -27,9 +27,9 @@ export interface AnalysisResult {
   socialDynamics: string | null
 }
 
-const SYSTEM_PROMPT = `You are an emotional intelligence analyst for a video call. Analyze every visible person.
+const SYSTEM_PROMPT = `You are an emotional intelligence analyst for a video call, helping someone with social communication difficulties. Analyze every visible person in the screenshot.
 
-Return ONLY valid JSON (no markdown, no extra text):
+Return ONLY valid JSON (no markdown fences, no explanation):
 
 {
   "participants": [
@@ -44,7 +44,7 @@ Return ONLY valid JSON (no markdown, no extra text):
       "engagement": "high",
       "likelyTopic": "Listening to a technical discussion",
       "sentiment": "Cautiously optimistic but has concerns",
-      "socialCue": "They are paying attention and care about what is being said. Crossed arms means they are comfortable, not upset.",
+      "socialCue": "They are paying attention. Crossed arms means comfortable, not upset.",
       "emotionExplanation": "They look focused because the topic matters to them.",
       "communicationTip": "Good time to share your thoughts — they are listening.",
       "isSpeaking": false,
@@ -63,7 +63,7 @@ RULES:
 - "engagement": high, medium, or low
 - "confidence": 0.0-1.0
 - "bodyLanguage": Detailed — posture, hands, head tilt, eyes, mouth. 5+ words.
-- "socialCue": Explain what their behavior MEANS in plain language for someone who finds body language hard to read. 1-2 sentences.
+- "socialCue": Explain what their behavior MEANS in plain language. 1-2 sentences.
 - "emotionExplanation": WHY they might feel this way. 1 sentence.
 - "communicationTip": What the user should do. 1 sentence.
 - "isSpeaking": true if mouth open/gesturing as if talking
@@ -80,21 +80,12 @@ If NO video call or faces visible: {"participants":[],"meetingMood":"neutral","a
 
 Detect ALL visible people. Look for name tags and text on screen for context.`
 
-// Known working NIM vision models (in preference order)
-const VISION_MODELS = [
-  "meta/llama-4-maverick-17b-128e-instruct",
-  "nvidia/llama-3.2-90b-vision-instruct",
-  "google/gemma-3-27b-it",
-  "meta/llama-3.2-11b-vision-instruct",
-]
-
 export class EmotionAnalyzerHelper {
-  private client: OpenAI
+  private client: Anthropic
   private lastCallTime: number = 0
   private minIntervalMs: number = 2000
   private consecutiveErrors: number = 0
   private readonly maxBackoffMs: number = 30000
-  private currentModelIndex: number = 0
   private isProcessing: boolean = false
 
   // Rolling transcript buffer for context
@@ -102,25 +93,10 @@ export class EmotionAnalyzerHelper {
   private readonly maxTranscriptBuffer = 20
 
   constructor(apiKey: string) {
-    this.client = new OpenAI({
+    this.client = new Anthropic({
       apiKey,
-      baseURL: "https://integrate.api.nvidia.com/v1",
     })
-    console.log("[EmotionAnalyzer] Initialized with NVIDIA NIM API")
-    console.log("[EmotionAnalyzer] Using model:", VISION_MODELS[0])
-  }
-
-  private getCurrentModel(): string {
-    return VISION_MODELS[this.currentModelIndex] || VISION_MODELS[0]
-  }
-
-  private tryNextModel(): boolean {
-    if (this.currentModelIndex < VISION_MODELS.length - 1) {
-      this.currentModelIndex++
-      console.log(`[EmotionAnalyzer] Switching to model: ${this.getCurrentModel()}`)
-      return true
-    }
-    return false
+    console.log("[EmotionAnalyzer] Initialized with Claude API")
   }
 
   public addTranscriptContext(text: string): void {
@@ -138,10 +114,10 @@ export class EmotionAnalyzerHelper {
     if (recent.length === 0) return ""
 
     const lines = recent.map((t) => t.text).join(" | ")
-    return `\n\nRecent speech: "${lines}"`
+    return `\n\nRecent speech heard: "${lines}"`
   }
 
-  public async analyzeFrame(base64Image: string): Promise<AnalysisResult | null> {
+  public async analyzeFrame(base64Image: string, mediaType: string = "image/jpeg"): Promise<AnalysisResult | null> {
     if (this.isProcessing) return null
 
     const now = Date.now()
@@ -159,39 +135,40 @@ export class EmotionAnalyzerHelper {
 
     try {
       const transcriptContext = this.getTranscriptContext()
-      const userPrompt = SYSTEM_PROMPT + transcriptContext +
-        "\n\nAnalyze this video call screenshot now. Return JSON only."
+      const userText = "Analyze this video call screenshot now. Return JSON only." + transcriptContext
 
-      console.log(`[EmotionAnalyzer] Sending frame to ${this.getCurrentModel()}...`)
+      console.log("[EmotionAnalyzer] Sending frame to Claude...")
 
-      const response = await this.client.chat.completions.create({
-        model: this.getCurrentModel(),
+      const response = await this.client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
         messages: [
           {
             role: "user",
             content: [
               {
-                type: "text",
-                text: userPrompt,
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                  data: base64Image,
+                },
               },
               {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/png;base64,${base64Image}`,
-                },
+                type: "text",
+                text: userText,
               },
             ],
           },
         ],
-        max_tokens: 4096,
-        temperature: 0.3,
-        stream: false,
-      } as any)
+      })
 
-      const text = response.choices[0]?.message?.content || "{}"
+      const textBlock = response.content.find((b) => b.type === "text")
+      const text = textBlock && textBlock.type === "text" ? textBlock.text : "{}"
       console.log(`[EmotionAnalyzer] Got response (${text.length} chars)`)
 
-      // Extract JSON from response (handle models that wrap in markdown)
+      // Extract JSON from response
       let jsonStr = text
       const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
       if (fencedMatch) {
@@ -207,17 +184,15 @@ export class EmotionAnalyzerHelper {
       try {
         result = JSON.parse(jsonStr) as AnalysisResult
       } catch (parseErr) {
-        console.error("[EmotionAnalyzer] JSON parse error, raw:", text.substring(0, 200))
+        console.error("[EmotionAnalyzer] JSON parse error, raw:", text.substring(0, 300))
         this.consecutiveErrors++
         return null
       }
 
-      // Ensure participants array exists
       if (!Array.isArray(result.participants)) {
         result.participants = []
       }
 
-      // Ensure participants have all required fields with defaults
       result.participants = result.participants.map((p: any, i: number) => ({
         id: p.id || `person_${i + 1}`,
         name: p.name || `Person ${i + 1}`,
@@ -236,7 +211,6 @@ export class EmotionAnalyzerHelper {
         speakerConfidence: typeof p.speakerConfidence === "number" ? p.speakerConfidence : 0,
       }))
 
-      // Ensure top-level fields
       result.meetingMood = result.meetingMood || "neutral"
       result.activeContext = result.activeContext || "No active call detected"
       result.suggestedAction = result.suggestedAction || null
@@ -249,17 +223,7 @@ export class EmotionAnalyzerHelper {
     } catch (error: any) {
       this.consecutiveErrors++
       const errMsg = error?.message || String(error)
-      const statusCode = error?.status || error?.response?.status
-
       console.error(`[EmotionAnalyzer] Error (attempt ${this.consecutiveErrors}):`, errMsg)
-
-      if (statusCode === 404 || statusCode === 400 || errMsg.includes("not found") || errMsg.includes("does not exist")) {
-        if (this.tryNextModel()) {
-          this.consecutiveErrors = 0
-          console.log(`[EmotionAnalyzer] Will retry with ${this.getCurrentModel()}`)
-        }
-      }
-
       return null
     } finally {
       this.isProcessing = false
@@ -283,19 +247,19 @@ export class EmotionAnalyzerHelper {
         })
         .join("\n")
 
-      const response = await this.client.chat.completions.create({
-        model: this.getCurrentModel(),
+      const response = await this.client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
         messages: [
           {
             role: "user",
             content: `You attended a meeting. Here are the notes:\n${notesText}\n\nParticipants: ${participants.map((p) => `${p.name} (${p.emotion})`).join(", ")}\n\nWrite a meeting summary in plain language with:\n1. What Was Discussed (bullet points)\n2. How People Were Feeling (describe each person's emotions simply)\n3. Important Moments (mood changes, disagreements)\n4. Action Items (if any)\n5. Meeting Score (1-10)\n\nKeep under 250 words. Use simple sentences.`,
           },
         ],
-        max_tokens: 1024,
-        temperature: 0.5,
       })
 
-      return response.choices[0]?.message?.content || "Unable to generate summary."
+      const textBlock = response.content.find((b) => b.type === "text")
+      return textBlock && textBlock.type === "text" ? textBlock.text : "Unable to generate summary."
     } catch (error) {
       console.error("[EmotionAnalyzer] Summary generation error:", error)
       return "Error generating meeting summary."

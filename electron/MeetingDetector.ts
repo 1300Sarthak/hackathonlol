@@ -23,6 +23,12 @@ export class MeetingDetector {
   private onMeetingDetected: (() => void) | null = null
   private onMeetingEnded: (() => void) | null = null
 
+  // Debounce: require N consecutive checks before changing state
+  private consecutiveDetections: number = 0
+  private consecutiveMisses: number = 0
+  private readonly detectThreshold = 2 // need 2 consecutive detections to start
+  private readonly missThreshold = 3 // need 3 consecutive misses to stop
+
   public setCallbacks(
     onDetected: () => void,
     onEnded: () => void
@@ -97,12 +103,22 @@ export class MeetingDetector {
     this.pollInterval = setInterval(async () => {
       const meetingActive = await this.checkForMeeting()
 
-      if (meetingActive && !this.isMeetingDetected) {
-        this.isMeetingDetected = true
-        this.onMeetingDetected?.()
-      } else if (!meetingActive && this.isMeetingDetected) {
-        this.isMeetingDetected = false
-        this.onMeetingEnded?.()
+      if (meetingActive) {
+        this.consecutiveMisses = 0
+        this.consecutiveDetections++
+
+        if (!this.isMeetingDetected && this.consecutiveDetections >= this.detectThreshold) {
+          this.isMeetingDetected = true
+          this.onMeetingDetected?.()
+        }
+      } else {
+        this.consecutiveDetections = 0
+        this.consecutiveMisses++
+
+        if (this.isMeetingDetected && this.consecutiveMisses >= this.missThreshold) {
+          this.isMeetingDetected = false
+          this.onMeetingEnded?.()
+        }
       }
     }, intervalMs)
   }
@@ -121,5 +137,7 @@ export class MeetingDetector {
   public cleanup(): void {
     this.stopPolling()
     this.isMeetingDetected = false
+    this.consecutiveDetections = 0
+    this.consecutiveMisses = 0
   }
 }
