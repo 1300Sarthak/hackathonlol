@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react"
+import { useEffect, useRef, useState } from "react"
 import { AnimatePresence, motion } from "framer-motion"
 import {
   Activity,
@@ -29,6 +29,8 @@ export function MeetingHUD({ onOpenSettings, onToggleMini }: MeetingHUDProps) {
     notes,
     meetingMood,
     currentSuggestion,
+    activeContext,
+    socialDynamics,
     isActive,
     alerts,
     apiStatus,
@@ -62,9 +64,19 @@ export function MeetingHUD({ onOpenSettings, onToggleMini }: MeetingHUDProps) {
     (n) => n.type === "transcript" || n.type === "emotion-event"
   )
 
-  const elapsedTime = useMeetingStore((s) =>
-    s.meetingStartTime ? Math.floor((Date.now() - s.meetingStartTime) / 1000) : 0
-  )
+  // Real-time elapsed time counter
+  const meetingStartTime = useMeetingStore((s) => s.meetingStartTime)
+  const [elapsedTime, setElapsedTime] = useState(0)
+  useEffect(() => {
+    if (!isActive || !meetingStartTime) {
+      setElapsedTime(0)
+      return
+    }
+    const timer = setInterval(() => {
+      setElapsedTime(Math.floor((Date.now() - meetingStartTime) / 1000))
+    }, 1000)
+    return () => clearInterval(timer)
+  }, [isActive, meetingStartTime])
 
   return (
     <GlassPanel noPadding className="flex flex-col max-h-[680px] overflow-hidden">
@@ -162,24 +174,53 @@ export function MeetingHUD({ onOpenSettings, onToggleMini }: MeetingHUDProps) {
 
       {/* Content */}
       <div className="flex-1 overflow-y-auto">
-        {/* Suggestion */}
+        {/* Suggestion — top priority for special needs users */}
         <AnimatePresence>
           {currentSuggestion && (
             <motion.div
               initial={{ opacity: 0, height: 0 }}
               animate={{ opacity: 1, height: "auto" }}
               exit={{ opacity: 0, height: 0 }}
-              className="px-4 pt-3"
+              className="px-3 pt-2.5"
             >
-              <div className="flex items-start gap-2 px-3 py-2 rounded-lg bg-accent/10 border border-accent/20">
-                <span className="text-[10px]">💡</span>
-                <span className="text-[11px] text-accent/80 leading-relaxed">
-                  {currentSuggestion}
-                </span>
+              <div className="flex items-start gap-2 px-3 py-2.5 rounded-lg bg-accent/10 border border-accent/20">
+                <span className="text-[12px] shrink-0 mt-0.5">💡</span>
+                <div>
+                  <span className="text-[9px] text-accent/50 uppercase tracking-wider font-medium">
+                    What you should do
+                  </span>
+                  <p className="text-[12px] text-accent/90 leading-relaxed mt-0.5">
+                    {currentSuggestion}
+                  </p>
+                </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* Social dynamics — how the conversation is going */}
+        {isActive && socialDynamics && (
+          <div className="px-3 pt-2">
+            <div className="px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5">
+              <span className="text-[9px] text-white/25 uppercase tracking-wider">How the conversation is going</span>
+              <p className="text-[12px] text-white/65 leading-relaxed mt-0.5">
+                {socialDynamics}
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* Active context */}
+        {isActive && activeContext && activeContext !== "No active call detected" && (
+          <div className="px-3 pt-2">
+            <div className="px-3 py-2 rounded-lg bg-white/[0.02] border border-white/5">
+              <span className="text-[9px] text-white/25 uppercase tracking-wider">What's happening</span>
+              <p className="text-[11px] text-white/55 leading-relaxed mt-0.5">
+                {activeContext}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Participants */}
         {(participants.length > 0 || isAnalyzing) && (
@@ -211,7 +252,7 @@ export function MeetingHUD({ onOpenSettings, onToggleMini }: MeetingHUDProps) {
           <div className="px-3 pt-3 pb-2">
             <div className="flex items-center justify-between mb-1.5 px-1">
               <span className="text-[10px] font-medium text-white/30 uppercase tracking-wider">
-                Live Notes
+                What's being said
               </span>
               <span className="text-[9px] text-white/20">
                 {transcriptNotes.length} entries
@@ -219,7 +260,7 @@ export function MeetingHUD({ onOpenSettings, onToggleMini }: MeetingHUDProps) {
             </div>
             <div
               ref={transcriptRef}
-              className="max-h-[180px] overflow-y-auto space-y-0.5"
+              className="max-h-[200px] overflow-y-auto space-y-0.5"
             >
               {transcriptNotes.map((note) => (
                 <TranscriptEntry key={note.id} note={note} />
@@ -234,8 +275,11 @@ export function MeetingHUD({ onOpenSettings, onToggleMini }: MeetingHUDProps) {
             <div className="w-10 h-10 rounded-full bg-white/5 flex items-center justify-center mb-3">
               <Activity className="w-5 h-5 text-white/20" />
             </div>
-            <p className="text-xs text-white/30 text-center mb-1">
-              No active call detected
+            <p className="text-sm text-white/40 text-center mb-1">
+              Ready to help you
+            </p>
+            <p className="text-xs text-white/25 text-center mb-3">
+              Start a video call and I'll help you understand what people are feeling and saying
             </p>
             <p className="text-[10px] text-white/20 text-center">
               Press <kbd className="px-1 py-0.5 rounded bg-white/5 text-white/40 font-mono text-[9px]">⌘⇧S</kbd> to start manually

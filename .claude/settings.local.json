@@ -5,7 +5,10 @@
       "Bash(find:*)",
       "Bash(npm install:*)",
       "Bash(npx tsc:*)",
-      "Bash(npx vite:*)"
+      "Bash(npx vite:*)",
+      "WebFetch(domain:build.nvidia.com)",
+      "Bash(curl:*)",
+      "WebSearch"
     ]
   }
 }

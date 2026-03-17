@@ -16,6 +16,8 @@ interface MeetingStore {
   meetingMood: MeetingMood
   currentSuggestion: string | null
   activeContext: string
+  socialDynamics: string | null
+  conversationSummary: string | null
   isActive: boolean
   isMiniMode: boolean
   meetingStartTime: number | null
@@ -44,6 +46,8 @@ export const useMeetingStore = create<MeetingStore>((set, get) => ({
   meetingMood: "neutral",
   currentSuggestion: null,
   activeContext: "No active call detected",
+  socialDynamics: null,
+  conversationSummary: null,
   isActive: false,
   isMiniMode: false,
   meetingStartTime: null,
@@ -84,7 +88,9 @@ export const useMeetingStore = create<MeetingStore>((set, get) => ({
         meetingMood: result.meetingMood as MeetingMood,
         currentSuggestion: result.suggestedAction,
         activeContext: result.activeContext,
-        notes: [...state.notes, ...newNotes].slice(-100),
+        socialDynamics: (result as any).socialDynamics || state.socialDynamics,
+        conversationSummary: (result as any).conversationSummary || state.conversationSummary,
+        notes: [...state.notes, ...newNotes].slice(-150),
         isAnalyzing: false,
       }
     }),
@@ -97,12 +103,13 @@ export const useMeetingStore = create<MeetingStore>((set, get) => ({
         text,
         emotion,
         participant,
+        speaker: participant,
         type: "transcript",
         importance: emotion && ["frustrated", "anxious", "tense"].includes(emotion)
           ? "high"
           : "low",
       }
-      return { notes: [...state.notes, note].slice(-100) }
+      return { notes: [...state.notes, note].slice(-150) }
     }),
 
   addAlert: (participant, alert) =>
@@ -140,6 +147,8 @@ export const useMeetingStore = create<MeetingStore>((set, get) => ({
       meetingMood: "neutral",
       currentSuggestion: null,
       activeContext: "No active call detected",
+      socialDynamics: null,
+      conversationSummary: null,
       isActive: false,
       isMiniMode: false,
       meetingStartTime: null,

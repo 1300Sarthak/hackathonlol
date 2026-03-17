@@ -59,26 +59,19 @@ export class ScreenshotHelper {
     return buffer
   }
 
-  /** Capture screen and return raw buffer + base64 without saving to disk */
-  public async captureToBuffer(
-    hideMainWindow: () => void,
-    showMainWindow: () => void
-  ): Promise<{ buffer: Buffer; base64: string }> {
-    hideMainWindow()
-    await new Promise((resolve) => setTimeout(resolve, 100))
+  /**
+   * Capture screen and return raw buffer + base64 WITHOUT hiding the window.
+   * The window has contentProtection enabled so it won't appear in screenshots.
+   * This eliminates the flashing/flickering issue.
+   */
+  public async captureToBuffer(): Promise<{ buffer: Buffer; base64: string }> {
+    const buffer =
+      process.platform === "darwin"
+        ? await this.captureScreenshotMac()
+        : await this.captureScreenshotWindows()
 
-    try {
-      const buffer =
-        process.platform === "darwin"
-          ? await this.captureScreenshotMac()
-          : await this.captureScreenshotWindows()
-
-      const base64 = buffer.toString("base64")
-      return { buffer, base64 }
-    } finally {
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      showMainWindow()
-    }
+    const base64 = buffer.toString("base64")
+    return { buffer, base64 }
   }
 
   /** Capture and save to disk (for debugging / file-based workflows) */

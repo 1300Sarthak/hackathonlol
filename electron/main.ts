@@ -4,7 +4,7 @@ import { WindowHelper } from "./WindowHelper"
 import { ScreenshotHelper } from "./ScreenshotHelper"
 import { ShortcutsHelper } from "./shortcuts"
 import { AudioHelper } from "./AudioHelper"
-import { EmotionAnalyzerHelper, AnalysisResult } from "./EmotionAnalyzerHelper"
+import { EmotionAnalyzerHelper, type AnalysisResult } from "./EmotionAnalyzerHelper"
 import { MeetingDetector } from "./MeetingDetector"
 import { FrameDiffHelper } from "./FrameDiffHelper"
 import { store } from "./store"
@@ -12,8 +12,15 @@ import { initAutoUpdater } from "./autoUpdater"
 import * as dotenv from "dotenv"
 import path from "node:path"
 
-// Load environment variables
-dotenv.config({ path: path.join(process.cwd(), ".env.local") })
+// Load environment variables — try multiple paths since cwd varies in dev vs prod
+const envPaths = [
+  path.join(process.cwd(), ".env.local"),
+  path.join(__dirname, "..", ".env.local"),
+  path.join(__dirname, "..", "..", ".env.local"),
+]
+for (const envPath of envPaths) {
+  dotenv.config({ path: envPath })
+}
 dotenv.config() // fallback to .env
 
 export type ViewType = "onboarding" | "hud" | "mini" | "summary" | "settings"
@@ -68,13 +75,21 @@ export class AppState {
 
     // Initialize emotion analyzer with NVIDIA NIM API key
     const apiKey = process.env.NVIDIA_NIM_API_KEY
+    console.log(`[AppState] NVIDIA_NIM_API_KEY loaded: ${apiKey ? "YES (" + apiKey.substring(0, 10) + "...)" : "NO — check .env.local"}`)
     if (apiKey) {
       this.emotionAnalyzer = new EmotionAnalyzerHelper(apiKey)
+    } else {
+      console.error("[AppState] WARNING: No NVIDIA_NIM_API_KEY found. Analysis will not work.")
+      console.error("[AppState] Searched paths:", envPaths)
     }
 
-    // Set up audio transcription callback
+    // Set up audio transcription callback — also feed into emotion analyzer for context
     this.audioHelper.setOnTranscription((text) => {
       this.handleTranscription(text)
+      // Feed transcript to emotion analyzer so it can use conversation context
+      if (this.emotionAnalyzer) {
+        this.emotionAnalyzer.addTranscriptContext(text)
+      }
     })
 
     // Set up meeting detection callbacks
@@ -144,17 +159,15 @@ export class AppState {
     this.frameDiffHelper.reset()
 
     const mainWindow = this.getMainWindow()
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(this.EVENTS.MEETING_STARTED, {
         startTime: this.meetingStartTime,
       })
     }
 
-    // Start audio recording if enabled
+    // Audio transcription now handled by Web Speech API in the renderer
+    // sox/Whisper recording disabled — renderer sends transcripts via IPC
     const settings = store.get("settings")
-    if (settings.audioEnabled) {
-      await this.audioHelper.startRecording()
-    }
 
     // Start periodic screen capture + analysis
     const intervalMs = settings.analysisFrequencyMs || 2000
@@ -181,7 +194,7 @@ export class AppState {
     await this.audioHelper.stopRecording()
 
     const mainWindow = this.getMainWindow()
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(this.EVENTS.MEETING_ENDED, {
         duration: Date.now() - this.meetingStartTime,
       })
@@ -202,14 +215,13 @@ export class AppState {
     if (!this.isMeetingActive || !this.emotionAnalyzer) return
 
     try {
-      // Capture screen
-      const { buffer, base64 } = await this.screenshotHelper.captureToBuffer(
-        () => this.hideMainWindow(),
-        () => this.showMainWindow()
-      )
+      // Capture screen (no hide/show — contentProtection keeps our window invisible in screenshots)
+      const { buffer, base64 } = await this.screenshotHelper.captureToBuffer()
 
       // Check frame diff — skip if not significantly changed
-      if (!this.frameDiffHelper.hasSignificantChange(buffer)) {
+      const hasChange = this.frameDiffHelper.hasSignificantChange(buffer)
+      if (!hasChange) {
+        console.log("[Analysis] Frame unchanged, skipping")
         return
       }
 
@@ -221,7 +233,7 @@ export class AppState {
 
       // Send result to renderer
       const mainWindow = this.getMainWindow()
-      if (mainWindow) {
+      if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send(this.EVENTS.ANALYSIS_RESULT, result)
 
         // Send API status
@@ -246,18 +258,40 @@ export class AppState {
     }
   }
 
-  private handleTranscription(text: string): void {
+  // Called from renderer-side Web Speech API
+  public handleRendererTranscript(text: string, speaker?: string): void {
+    // Feed to emotion analyzer for context
+    if (this.emotionAnalyzer) {
+      this.emotionAnalyzer.addTranscriptContext(text)
+    }
+
+    // Try to attribute speaker from analysis if not provided
+    if (!speaker && this.lastAnalysisResult?.participants) {
+      const speakingPerson = this.lastAnalysisResult.participants.find(
+        (p) => p.isSpeaking && p.speakerConfidence > 0.5
+      )
+      if (speakingPerson) {
+        speaker = speakingPerson.name
+      }
+    }
+
     const note = {
       text,
       timestamp: Date.now(),
       emotion: this.lastAnalysisResult?.meetingMood,
+      participant: speaker,
     }
     this.meetingNotes.push(note)
 
     const mainWindow = this.getMainWindow()
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send(this.EVENTS.TRANSCRIPT_UPDATE, note)
     }
+  }
+
+  private handleTranscription(text: string): void {
+    // Fallback handler for sox/Whisper (mostly unused now that Web Speech API handles transcription)
+    this.handleRendererTranscript(text)
   }
 
   public async generateMeetingSummary(): Promise<string> {

@@ -21,8 +21,10 @@ export class AudioHelper {
   private recordingProcess: any = null
   private currentChunkPath: string | null = null
   private rollingTimer: NodeJS.Timeout | null = null
-  private onTranscription: ((text: string) => void) | null = null
-  private readonly chunkDurationSec: number = 5
+  private onTranscription: ((text: string, speaker?: string) => void) | null = null
+  private readonly chunkDurationSec: number = 3 // Shorter chunks for more real-time feel
+  private lastTranscriptText: string = "" // Dedup consecutive identical transcripts
+  private transcriptBuffer: string[] = [] // Rolling buffer for context
 
   constructor() {
     this.audioDir = path.join(app.getPath("userData"), "audio_chunks")
@@ -31,14 +33,16 @@ export class AudioHelper {
     }
   }
 
-  public setOnTranscription(callback: (text: string) => void): void {
+  public setOnTranscription(callback: (text: string, speaker?: string) => void): void {
     this.onTranscription = callback
   }
 
   public async startRecording(): Promise<void> {
     if (this.isRecording) return
     this.isRecording = true
-    console.log("Starting rolling audio recording...")
+    this.lastTranscriptText = ""
+    this.transcriptBuffer = []
+    console.log("Starting rolling audio recording (3s chunks)...")
     this.startNextChunk()
   }
 
@@ -72,26 +76,19 @@ export class AudioHelper {
     const outputPath = path.join(this.audioDir, `${uuidv4()}.wav`)
     this.currentChunkPath = outputPath
 
-    if (process.platform === "darwin") {
-      this.recordingProcess = execFile("sox", [
-        "-d",
-        "-r", "16000",
-        "-c", "1",
-        "-b", "16",
-        outputPath,
-        "trim", "0", String(this.chunkDurationSec),
-      ])
-    } else {
-      // Windows fallback — simplified
-      this.recordingProcess = execFile("sox", [
-        "-d",
-        "-r", "16000",
-        "-c", "1",
-        "-b", "16",
-        outputPath,
-        "trim", "0", String(this.chunkDurationSec),
-      ])
-    }
+    // Record with noise reduction for clearer audio
+    const soxArgs = [
+      "-d",
+      "-r", "16000",
+      "-c", "1",
+      "-b", "16",
+      outputPath,
+      "trim", "0", String(this.chunkDurationSec),
+      // Apply basic noise gate to reduce background noise
+      "silence", "1", "0.1", "1%",
+    ]
+
+    this.recordingProcess = execFile("sox", soxArgs)
 
     // When this chunk finishes, transcribe it and start the next
     this.recordingProcess.on("exit", async () => {
@@ -100,7 +97,7 @@ export class AudioHelper {
           console.error("Transcription error:", err)
         )
       }
-      // Start next chunk if still recording
+      // Start next chunk immediately if still recording
       if (this.isRecording) {
         this.startNextChunk()
       }
@@ -119,7 +116,7 @@ export class AudioHelper {
   private async transcribeChunk(audioPath: string): Promise<void> {
     try {
       const stats = await fs.promises.stat(audioPath)
-      if (stats.size < 1000) {
+      if (stats.size < 800) {
         // Too small, likely silence
         await fs.promises.unlink(audioPath).catch(() => {})
         return
@@ -127,7 +124,29 @@ export class AudioHelper {
 
       const result = await this.transcribeAudio(audioPath)
       if (result && result.text.trim()) {
-        this.onTranscription?.(result.text.trim())
+        const text = result.text.trim()
+
+        // Dedup: skip if identical to last transcript (common with silence/noise)
+        if (text === this.lastTranscriptText) {
+          await fs.promises.unlink(audioPath).catch(() => {})
+          return
+        }
+
+        // Skip very short noise artifacts
+        if (text.length < 3 || text === "you" || text === "the" || text === "a") {
+          await fs.promises.unlink(audioPath).catch(() => {})
+          return
+        }
+
+        this.lastTranscriptText = text
+
+        // Add to rolling buffer for context
+        this.transcriptBuffer.push(text)
+        if (this.transcriptBuffer.length > 30) {
+          this.transcriptBuffer = this.transcriptBuffer.slice(-30)
+        }
+
+        this.onTranscription?.(text)
       }
 
       // Clean up the chunk file
@@ -145,7 +164,6 @@ export class AudioHelper {
     }
 
     try {
-      // Use OpenAI Whisper API via form-data (proper multipart)
       const formData = new FormData()
       formData.append("file", fs.createReadStream(audioPath), {
         filename: "audio.wav",
@@ -153,9 +171,15 @@ export class AudioHelper {
       })
       formData.append("model", "whisper-1")
       formData.append("language", "en")
+      // Request word-level timestamps for better accuracy
+      formData.append("response_format", "verbose_json")
+      formData.append("timestamp_granularities[]", "word")
+      // Provide context from recent transcripts to improve accuracy
+      if (this.transcriptBuffer.length > 0) {
+        const context = this.transcriptBuffer.slice(-5).join(". ")
+        formData.append("prompt", context)
+      }
 
-      // Use OpenAI's Whisper endpoint directly (NIM may not support audio)
-      // Falls back to a no-op if no OpenAI key is available
       const response = await axios.post(
         "https://api.openai.com/v1/audio/transcriptions",
         formData,
@@ -168,9 +192,13 @@ export class AudioHelper {
         }
       )
 
+      const text = typeof response.data === "string"
+        ? response.data
+        : response.data.text || ""
+
       return {
-        text: response.data.text,
-        confidence: 0.9,
+        text,
+        confidence: response.data.confidence || 0.9,
         language: response.data.language || "en",
       }
     } catch (error: any) {
@@ -180,6 +208,10 @@ export class AudioHelper {
       }
       return null
     }
+  }
+
+  public getRecentTranscripts(): string[] {
+    return [...this.transcriptBuffer]
   }
 
   public isCurrentlyRecording(): boolean {

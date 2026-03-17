@@ -33,7 +33,17 @@ export interface Participant {
   alert: string | null
   engagement: EngagementLevel
   lastUpdated: number
+  likelyTopic?: string
+  sentiment?: string
+  // Special needs support fields
+  socialCue?: string // Plain-language explanation of what this person's behavior means
+  emotionExplanation?: string // Why they might be feeling this way
+  communicationTip?: string // How the user should respond to this person
+  isSpeaking?: boolean // Whether this person appears to be talking
+  speakerConfidence?: number // How confident we are they're speaking
 }
+
+export type NoteImportance = Importance
 
 export interface MeetingNote {
   id: string
@@ -43,6 +53,8 @@ export interface MeetingNote {
   participant?: string
   type: NoteType
   importance: Importance
+  socialContext?: string // What this means in social terms for special needs users
+  speaker?: string // Who said this
 }
 
 export interface AnalysisResult {
@@ -50,6 +62,8 @@ export interface AnalysisResult {
   meetingMood: MeetingMood
   activeContext: string
   suggestedAction: string | null
+  conversationSummary: string | null
+  socialDynamics: string | null
 }
 
 export interface MeetingSettings {
