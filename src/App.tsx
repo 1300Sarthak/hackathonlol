@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react"
 import { useMeetingStore } from "./store/meetingStore"
+import { useSpeechRecognition } from "./lib/useSpeechRecognition"
 import { MeetingHUD } from "./_pages/MeetingHUD"
 import { MiniBar } from "./_pages/MiniBar"
 import { MeetingSummary } from "./_pages/MeetingSummary"
@@ -21,6 +22,10 @@ function App() {
   const addAlert = useMeetingStore((s) => s.addAlert)
   const setApiStatus = useMeetingStore((s) => s.setApiStatus)
   const reset = useMeetingStore((s) => s.reset)
+  const isActive = useMeetingStore((s) => s.isActive)
+
+  // Web Speech API for real-time transcription (runs in renderer, no API key needed)
+  useSpeechRecognition(isActive)
 
   // Check if onboarded on mount
   useEffect(() => {

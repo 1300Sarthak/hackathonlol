@@ -69,4 +69,10 @@ export function initializeIpcHandlers(appState: AppState): void {
   ipcMain.handle("is-meeting-running", async () => {
     return appState.isMeetingRunning()
   })
+
+  // Renderer-side speech recognition sends transcripts here
+  ipcMain.handle("send-transcript", async (_event, text: string, speaker?: string) => {
+    appState.handleRendererTranscript(text, speaker)
+    return { success: true }
+  })
 }

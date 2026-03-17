@@ -50,7 +50,14 @@
       "icon": "assets/icons/png/icon-256x256.png"
     }
   },
-  "keywords": ["ai", "emotion", "meeting", "social", "translator", "productivity"],
+  "keywords": [
+    "ai",
+    "emotion",
+    "meeting",
+    "social",
+    "translator",
+    "productivity"
+  ],
   "author": "",
   "license": "ISC",
   "description": "Real-time emotional intelligence overlay for video calls — reads facial expressions, transcribes speech, and surfaces behavioral guidance.",
@@ -81,6 +88,7 @@
     "wait-on": "^8.0.1"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.79.0",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-label": "^2.1.0",
     "@radix-ui/react-slot": "^1.1.0",

@@ -10,6 +10,9 @@ interface ElectronAPI {
   generateSummary: () => Promise<{ success: boolean; summary: string }>
   copyNotes: () => Promise<{ success: boolean }>
 
+  // Renderer-side speech recognition
+  sendTranscript: (text: string, speaker?: string) => Promise<{ success: boolean }>
+
   // Settings
   getSettings: () => Promise<any>
   updateSettings: (settings: any) => Promise<{ success: boolean }>

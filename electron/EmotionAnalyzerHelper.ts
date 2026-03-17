@@ -1,4 +1,4 @@
-import OpenAI from "openai"
+import Anthropic from "@anthropic-ai/sdk"
 
 export interface AnalysisParticipant {
   id: string
@@ -9,6 +9,13 @@ export interface AnalysisParticipant {
   bodyLanguage: string
   alert: string | null
   engagement: string
+  likelyTopic: string
+  sentiment: string
+  socialCue: string
+  emotionExplanation: string
+  communicationTip: string
+  isSpeaking: boolean
+  speakerConfidence: number
 }
 
 export interface AnalysisResult {
@@ -16,10 +23,13 @@ export interface AnalysisResult {
   meetingMood: string
   activeContext: string
   suggestedAction: string | null
+  conversationSummary: string | null
+  socialDynamics: string | null
 }
 
-const SYSTEM_PROMPT = `You are an expert emotional intelligence analyst watching a video call screenshot.
-Analyze visible participants and return ONLY valid JSON (no markdown, no explanation) with this shape:
+const SYSTEM_PROMPT = `You are an emotional intelligence analyst for a video call, helping someone with social communication difficulties. Analyze every visible person in the screenshot.
+
+Return ONLY valid JSON (no markdown fences, no explanation):
 
 {
   "participants": [
@@ -29,100 +39,194 @@ Analyze visible participants and return ONLY valid JSON (no markdown, no explana
       "position": "top-left",
       "emotion": "neutral",
       "confidence": 0.8,
-      "bodyLanguage": "leaning forward",
+      "bodyLanguage": "leaning forward, arms crossed, tense shoulders",
       "alert": null,
-      "engagement": "high"
+      "engagement": "high",
+      "likelyTopic": "Listening to a technical discussion",
+      "sentiment": "Cautiously optimistic but has concerns",
+      "socialCue": "They are paying attention. Crossed arms means comfortable, not upset.",
+      "emotionExplanation": "They look focused because the topic matters to them.",
+      "communicationTip": "Good time to share your thoughts — they are listening.",
+      "isSpeaking": false,
+      "speakerConfidence": 0.1
     }
   ],
   "meetingMood": "neutral",
-  "activeContext": "Video call in progress",
-  "suggestedAction": null
+  "activeContext": "Team standup — one person presenting while others listen",
+  "suggestedAction": null,
+  "conversationSummary": null,
+  "socialDynamics": null
 }
 
-Rules:
-- emotion must be one of: neutral, happy, confused, frustrated, anxious, disengaged, excited, sad, skeptical, focused
-- engagement must be: high, medium, or low
-- position: top-left, top-right, bottom-left, bottom-right, center, full
-- confidence: 0.0 to 1.0
-- alerts should be rare and high-signal (e.g. "Appears very upset", "Seems disengaged")
-- suggestedAction: concise, actionable, second-person ("Consider asking if they have questions")
-- If no video call or no faces visible: {"participants":[],"meetingMood":"neutral","activeContext":"No active call detected","suggestedAction":null}
-- Only include participants you can actually see with faces visible`
+RULES:
+- "emotion": ONE OF: neutral, happy, confused, frustrated, anxious, disengaged, excited, sad, skeptical, focused
+- "engagement": high, medium, or low
+- "confidence": 0.0-1.0
+- "bodyLanguage": Detailed — posture, hands, head tilt, eyes, mouth. 5+ words.
+- "socialCue": Explain what their behavior MEANS in plain language. 1-2 sentences.
+- "emotionExplanation": WHY they might feel this way. 1 sentence.
+- "communicationTip": What the user should do. 1 sentence.
+- "isSpeaking": true if mouth open/gesturing as if talking
+- "speakerConfidence": 0.0-1.0
+- "alert": Only for important situations. Usually null.
+- "name": Use name tag if visible, otherwise "Person 1" etc.
+- "meetingMood": positive, neutral, tense, confused, or energized
+- "activeContext": What's happening. 1-2 sentences.
+- "suggestedAction": Advice if useful, else null.
+- "conversationSummary": What's being discussed, null if unclear.
+- "socialDynamics": Who's leading, comfort level, null if unclear.
+
+If NO video call or faces visible: {"participants":[],"meetingMood":"neutral","activeContext":"No active call detected","suggestedAction":null,"conversationSummary":null,"socialDynamics":null}
+
+Detect ALL visible people. Look for name tags and text on screen for context.`
 
 export class EmotionAnalyzerHelper {
-  private client: OpenAI
+  private client: Anthropic
   private lastCallTime: number = 0
-  private minIntervalMs: number = 1500
+  private minIntervalMs: number = 2000
   private consecutiveErrors: number = 0
   private readonly maxBackoffMs: number = 30000
+  private isProcessing: boolean = false
+
+  // Rolling transcript buffer for context
+  private recentTranscripts: Array<{ text: string; timestamp: number }> = []
+  private readonly maxTranscriptBuffer = 20
 
   constructor(apiKey: string) {
-    this.client = new OpenAI({
+    this.client = new Anthropic({
       apiKey,
-      baseURL: "https://integrate.api.nvidia.com/v1",
     })
+    console.log("[EmotionAnalyzer] Initialized with Claude API")
   }
 
-  public async analyzeFrame(base64Image: string): Promise<AnalysisResult | null> {
-    // Rate limiting
+  public addTranscriptContext(text: string): void {
+    this.recentTranscripts.push({ text, timestamp: Date.now() })
+    if (this.recentTranscripts.length > this.maxTranscriptBuffer) {
+      this.recentTranscripts = this.recentTranscripts.slice(-this.maxTranscriptBuffer)
+    }
+  }
+
+  private getTranscriptContext(): string {
+    if (this.recentTranscripts.length === 0) return ""
+
+    const cutoff = Date.now() - 60000
+    const recent = this.recentTranscripts.filter((t) => t.timestamp > cutoff)
+    if (recent.length === 0) return ""
+
+    const lines = recent.map((t) => t.text).join(" | ")
+    return `\n\nRecent speech heard: "${lines}"`
+  }
+
+  public async analyzeFrame(base64Image: string, mediaType: string = "image/jpeg"): Promise<AnalysisResult | null> {
+    if (this.isProcessing) return null
+
     const now = Date.now()
     const timeSinceLastCall = now - this.lastCallTime
-    const backoffMs = Math.min(
-      this.minIntervalMs * Math.pow(2, this.consecutiveErrors),
-      this.maxBackoffMs
-    )
+    const backoffMs = this.consecutiveErrors > 0
+      ? Math.min(this.minIntervalMs * Math.pow(2, this.consecutiveErrors), this.maxBackoffMs)
+      : this.minIntervalMs
 
     if (timeSinceLastCall < backoffMs) {
       return null
     }
 
+    this.isProcessing = true
     this.lastCallTime = now
 
     try {
-      const response = await this.client.chat.completions.create({
-        model: "nvidia/llama-3.2-nv-vision-instruct",
+      const transcriptContext = this.getTranscriptContext()
+      const userText = "Analyze this video call screenshot now. Return JSON only." + transcriptContext
+
+      console.log("[EmotionAnalyzer] Sending frame to Claude...")
+
+      const response = await this.client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 4096,
+        system: SYSTEM_PROMPT,
         messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT,
-          },
           {
             role: "user",
             content: [
               {
-                type: "image_url",
-                image_url: {
-                  url: `data:image/jpeg;base64,${base64Image}`,
+                type: "image",
+                source: {
+                  type: "base64",
+                  media_type: mediaType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+                  data: base64Image,
                 },
               },
               {
                 type: "text",
-                text: "Analyze this video call screenshot. Return JSON only.",
+                text: userText,
               },
             ],
           },
         ],
-        max_tokens: 1024,
-        temperature: 0.3,
       })
 
-      const text = response.choices[0]?.message?.content || "{}"
+      const textBlock = response.content.find((b) => b.type === "text")
+      const text = textBlock && textBlock.type === "text" ? textBlock.text : "{}"
+      console.log(`[EmotionAnalyzer] Got response (${text.length} chars)`)
 
-      // Try to extract JSON from the response
-      const jsonMatch = text.match(/\{[\s\S]*\}/)
-      if (!jsonMatch) {
-        console.error("No JSON found in response:", text)
+      // Extract JSON from response
+      let jsonStr = text
+      const fencedMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/)
+      if (fencedMatch) {
+        jsonStr = fencedMatch[1].trim()
+      } else {
+        const braceMatch = text.match(/\{[\s\S]*\}/)
+        if (braceMatch) {
+          jsonStr = braceMatch[0]
+        }
+      }
+
+      let result: AnalysisResult
+      try {
+        result = JSON.parse(jsonStr) as AnalysisResult
+      } catch (parseErr) {
+        console.error("[EmotionAnalyzer] JSON parse error, raw:", text.substring(0, 300))
         this.consecutiveErrors++
         return null
       }
 
-      const result = JSON.parse(jsonMatch[0]) as AnalysisResult
+      if (!Array.isArray(result.participants)) {
+        result.participants = []
+      }
+
+      result.participants = result.participants.map((p: any, i: number) => ({
+        id: p.id || `person_${i + 1}`,
+        name: p.name || `Person ${i + 1}`,
+        position: p.position || "unknown",
+        emotion: p.emotion || "neutral",
+        confidence: typeof p.confidence === "number" ? p.confidence : 0.5,
+        bodyLanguage: p.bodyLanguage || "not clearly visible",
+        alert: p.alert || null,
+        engagement: p.engagement || "medium",
+        likelyTopic: p.likelyTopic || "Unable to determine",
+        sentiment: p.sentiment || "Neutral expression",
+        socialCue: p.socialCue || "",
+        emotionExplanation: p.emotionExplanation || "",
+        communicationTip: p.communicationTip || "",
+        isSpeaking: p.isSpeaking === true,
+        speakerConfidence: typeof p.speakerConfidence === "number" ? p.speakerConfidence : 0,
+      }))
+
+      result.meetingMood = result.meetingMood || "neutral"
+      result.activeContext = result.activeContext || "No active call detected"
+      result.suggestedAction = result.suggestedAction || null
+      result.conversationSummary = result.conversationSummary || null
+      result.socialDynamics = result.socialDynamics || null
+
       this.consecutiveErrors = 0
+      console.log(`[EmotionAnalyzer] Detected ${result.participants.length} participants`)
       return result
-    } catch (error) {
+    } catch (error: any) {
       this.consecutiveErrors++
-      console.error("Emotion analysis error:", error)
+      const errMsg = error?.message || String(error)
+      console.error(`[EmotionAnalyzer] Error (attempt ${this.consecutiveErrors}):`, errMsg)
       return null
+    } finally {
+      this.isProcessing = false
     }
   }
 
@@ -143,21 +247,21 @@ export class EmotionAnalyzerHelper {
         })
         .join("\n")
 
-      const response = await this.client.chat.completions.create({
-        model: "nvidia/llama-3.2-nv-vision-instruct",
+      const response = await this.client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 1024,
         messages: [
           {
             role: "user",
-            content: `You attended a meeting. Here are the notes:\n${notesText}\n\nParticipants observed: ${participants.map((p) => `${p.name} (${p.emotion})`).join(", ")}\n\nWrite a concise meeting summary with:\n1. Key points discussed\n2. Emotional dynamics observed\n3. Action items (if any)\n4. Overall meeting health score (1-10)\n\nKeep it under 200 words. Be direct and useful.`,
+            content: `You attended a meeting. Here are the notes:\n${notesText}\n\nParticipants: ${participants.map((p) => `${p.name} (${p.emotion})`).join(", ")}\n\nWrite a meeting summary in plain language with:\n1. What Was Discussed (bullet points)\n2. How People Were Feeling (describe each person's emotions simply)\n3. Important Moments (mood changes, disagreements)\n4. Action Items (if any)\n5. Meeting Score (1-10)\n\nKeep under 250 words. Use simple sentences.`,
           },
         ],
-        max_tokens: 512,
-        temperature: 0.5,
       })
 
-      return response.choices[0]?.message?.content || "Unable to generate summary."
+      const textBlock = response.content.find((b) => b.type === "text")
+      return textBlock && textBlock.type === "text" ? textBlock.text : "Unable to generate summary."
     } catch (error) {
-      console.error("Summary generation error:", error)
+      console.error("[EmotionAnalyzer] Summary generation error:", error)
       return "Error generating meeting summary."
     }
   }

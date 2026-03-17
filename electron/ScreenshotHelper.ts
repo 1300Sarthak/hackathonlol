@@ -4,6 +4,7 @@ import { app } from "electron"
 import { v4 as uuidv4 } from "uuid"
 import { execFile } from "child_process"
 import { promisify } from "util"
+import sharp from "sharp"
 
 const execFileAsync = promisify(execFile)
 
@@ -59,26 +60,33 @@ export class ScreenshotHelper {
     return buffer
   }
 
-  /** Capture screen and return raw buffer + base64 without saving to disk */
-  public async captureToBuffer(
-    hideMainWindow: () => void,
-    showMainWindow: () => void
-  ): Promise<{ buffer: Buffer; base64: string }> {
-    hideMainWindow()
-    await new Promise((resolve) => setTimeout(resolve, 100))
+  /**
+   * Compress a raw screenshot to a smaller JPEG for API upload.
+   * Retina screenshots can be 10MB+ as PNG — this brings them down to ~200-400KB.
+   */
+  private async compressForApi(rawBuffer: Buffer): Promise<Buffer> {
+    return sharp(rawBuffer)
+      .resize(1280, undefined, { withoutEnlargement: true }) // max 1280px wide
+      .jpeg({ quality: 75 })
+      .toBuffer()
+  }
 
-    try {
-      const buffer =
-        process.platform === "darwin"
-          ? await this.captureScreenshotMac()
-          : await this.captureScreenshotWindows()
+  /**
+   * Capture screen and return:
+   * - buffer: raw PNG for frame diffing
+   * - base64: compressed JPEG base64 for API upload
+   * - mediaType: the MIME type of the base64 data
+   */
+  public async captureToBuffer(): Promise<{ buffer: Buffer; base64: string; mediaType: string }> {
+    const rawBuffer =
+      process.platform === "darwin"
+        ? await this.captureScreenshotMac()
+        : await this.captureScreenshotWindows()
 
-      const base64 = buffer.toString("base64")
-      return { buffer, base64 }
-    } finally {
-      await new Promise((resolve) => setTimeout(resolve, 50))
-      showMainWindow()
-    }
+    const compressed = await this.compressForApi(rawBuffer)
+    const base64 = compressed.toString("base64")
+
+    return { buffer: rawBuffer, base64, mediaType: "image/jpeg" }
   }
 
   /** Capture and save to disk (for debugging / file-based workflows) */

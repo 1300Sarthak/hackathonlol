@@ -34,6 +34,10 @@ contextBridge.exposeInMainWorld("electronAPI", {
   generateSummary: () => ipcRenderer.invoke("generate-summary"),
   copyNotes: () => ipcRenderer.invoke("copy-notes"),
 
+  // Renderer-side speech recognition sends transcripts to main
+  sendTranscript: (text: string, speaker?: string) =>
+    ipcRenderer.invoke("send-transcript", text, speaker),
+
   // Settings
   getSettings: () => ipcRenderer.invoke("get-settings"),
   updateSettings: (settings: any) => ipcRenderer.invoke("update-settings", settings),

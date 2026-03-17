@@ -17,7 +17,7 @@ export default defineConfig({
         vite: {
           build: {
             rollupOptions: {
-              external: ["sharp", "electron", "electron-is-dev"]
+              external: ["sharp", "electron", "electron-is-dev", "@anthropic-ai/sdk"]
             }
           }
         }

@@ -2,7 +2,7 @@ export class FrameDiffHelper {
   private lastFrameBuffer: Buffer | null = null
   private readonly threshold: number
 
-  constructor(threshold: number = 0.15) {
+  constructor(threshold: number = 0.05) {
     this.threshold = threshold
   }
 
